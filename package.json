@@ -1,0 +1,16 @@
+{
+  "name": "adsense",
+  "version": "1.0.0",
+  "description": "Chrome Manifest V3 extension for tracking live AdSense earnings with Chrome Identity OAuth.",
+  "main": "config.js",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.61.0"
+  }
+}

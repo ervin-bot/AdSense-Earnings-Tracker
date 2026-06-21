@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AdSense Earnings</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="brand">
+                <img
+                    src="icons/icon128.png"
+                    class="brand-icon"
+                    width="40"
+                    height="40"
+                    alt=""
+                >
+                <div class="brand-copy">
+                    <h1>AdSense Earnings</h1>
+                    <span id="modeBadge" class="mode-badge">Demo mode</span>
+                </div>
+            </div>
+            <div class="controls">
+                <button id="refreshBtn" class="btn-icon" type="button" title="Refresh data" aria-label="Refresh data">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M20 12a8 8 0 0 1-13.66 5.66"></path>
+                        <path d="M4 12A8 8 0 0 1 17.66 6.34"></path>
+                        <path d="M17 2v5h5"></path>
+                        <path d="M7 22v-5H2"></path>
+                    </svg>
+                </button>
+                <button id="settingsBtn" class="btn-icon" type="button" title="Settings" aria-label="Settings">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.04.04a2 2 0 1 1-2.83 2.83l-.04-.04a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.07a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.04.04a2 2 0 1 1-2.83-2.83l.04-.04A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.04A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.04-.04a2 2 0 1 1 2.83-2.83l.04.04A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.04V3a2 2 0 1 1 4 0v.04a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.04-.04a2 2 0 1 1 2.83 2.83l-.04.04A1.7 1.7 0 0 0 19.4 9c.2.31.36.64.48 1H21a2 2 0 1 1 0 4h-1.12c-.12.36-.28.69-.48 1Z"></path>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <section id="loading" class="loading" aria-live="polite">
+            <div class="spinner" aria-hidden="true"></div>
+            <p>Loading earnings data...</p>
+        </section>
+
+        <section id="error" class="error" hidden role="alert">
+            <strong>Data unavailable</strong>
+            <p id="errorMessage"></p>
+            <div id="oauthSetupGuide" class="setup-guide" hidden>
+                <h2>OAuth setup</h2>
+                <p>In Google Cloud, create an OAuth Client ID with these values.</p>
+
+                <div class="copy-field">
+                    <span>Open Chrome extensions</span>
+                    <div class="copy-row">
+                        <code id="chromeExtensionsValue">chrome://extensions</code>
+                        <button class="copy-btn" type="button" data-copy-target="chromeExtensionsValue" aria-label="Copy Chrome extensions URL">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="copy-field">
+                    <span>Copy this Extension ID into Google Cloud Item ID</span>
+                    <div class="copy-row">
+                        <code id="extensionIdValue">Load unpacked first</code>
+                        <button class="copy-btn" type="button" data-copy-target="extensionIdValue" aria-label="Copy extension ID">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="copy-field">
+                    <span>Google Cloud fields</span>
+                    <div class="copy-row multi">
+                        <code id="googleCloudFieldsValue">Application type: Chrome extension
+Name: AdSense Earnings Tracker
+Item ID: Load unpacked first</code>
+                        <button class="copy-btn" type="button" data-copy-target="googleCloudFieldsValue" aria-label="Copy Google Cloud fields">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <p class="setup-note">After Google creates the OAuth client, paste its Client ID into <code>manifest.json</code>, reload the extension, then click Connect Google.</p>
+                <p id="copyStatus" class="copy-status" aria-live="polite"></p>
+            </div>
+            <div class="error-actions">
+                <button id="connectFromErrorBtn" class="btn-primary" type="button">Connect Google</button>
+                <button id="retryBtn" class="btn-secondary" type="button">Retry</button>
+            </div>
+        </section>
+
+        <main id="content" hidden>
+            <div id="contentNotice" class="content-notice" hidden></div>
+
+            <section class="earnings-highlight" aria-labelledby="todayLabel">
+                <div class="earnings-today">
+                    <span id="todayLabel" class="label">Today's earnings</span>
+                    <span class="amount" id="todayAmount">$0.00</span>
+                    <span class="change" id="todayChange">No comparison yet</span>
+                    <div class="month-projection" aria-label="Projected monthly earnings">
+                        <span class="projection-copy">
+                            <span class="projection-label">Projected month</span>
+                            <span id="monthProjectionMeta" class="projection-meta">Based on daily average</span>
+                        </span>
+                        <span id="monthProjectionAmount" class="projection-amount">$0.00</span>
+                    </div>
+                </div>
+            </section>
+
+            <div class="period-tabs" role="tablist" aria-label="Earnings period">
+                <button class="period-tab active" type="button" role="tab" aria-selected="true" data-period="today">Today</button>
+                <button class="period-tab" type="button" role="tab" aria-selected="false" data-period="yesterday">Yesterday</button>
+                <button class="period-tab" type="button" role="tab" aria-selected="false" data-period="week">This Week</button>
+                <button class="period-tab" type="button" role="tab" aria-selected="false" data-period="month">This Month</button>
+                <button class="period-tab" type="button" role="tab" aria-selected="false" data-period="30days">Last 30 Days</button>
+                <button class="period-tab" type="button" role="tab" aria-selected="false" data-period="lastmonth">Last Month</button>
+            </div>
+
+            <section class="earnings-breakdown" aria-live="polite">
+                <div id="todayRow" class="earnings-row active">
+                    <span class="period-label">Today</span>
+                    <span class="period-amount" id="todayAmt">$0.00</span>
+                </div>
+                <div id="yesterdayRow" class="earnings-row">
+                    <span class="period-label">Yesterday</span>
+                    <span class="period-amount" id="yesterdayAmt">$0.00</span>
+                </div>
+                <div id="weekRow" class="earnings-row">
+                    <span class="period-label">This Week</span>
+                    <span class="period-amount" id="weekAmt">$0.00</span>
+                </div>
+                <div id="monthRow" class="earnings-row">
+                    <span class="period-label">This Month</span>
+                    <span class="period-amount" id="monthAmt">$0.00</span>
+                </div>
+                <div id="30daysRow" class="earnings-row">
+                    <span class="period-label">Last 30 Days</span>
+                    <span class="period-amount" id="30daysAmt">$0.00</span>
+                </div>
+                <div id="lastmonthRow" class="earnings-row">
+                    <span class="period-label">Last Month</span>
+                    <span class="period-amount" id="lastmonthAmt">$0.00</span>
+                </div>
+            </section>
+
+            <section class="top-sites">
+                <div class="section-heading">
+                    <h2>Top 7 Sites</h2>
+                    <span id="sitesTotal" class="section-meta">$0.00 total</span>
+                </div>
+                <div id="sitesList" class="sites-list"></div>
+            </section>
+
+            <footer class="footer">
+                <span id="dataSource">Demo data</span>
+                <span>Last updated: <span id="lastUpdated">--:--</span></span>
+            </footer>
+        </main>
+
+        <section id="settingsPanel" class="settings-panel" hidden>
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button id="backBtn" class="btn-icon" type="button" title="Back" aria-label="Back">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="m15 18-6-6 6-6"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="settings-content">
+                <div class="setting-item">
+                    <label>Google AdSense authentication</label>
+                    <p id="authStatus" class="help-text">Not connected.</p>
+                    <div class="button-row">
+                        <button id="connectGoogleBtn" class="btn-primary" type="button">Connect Google</button>
+                        <button id="disconnectGoogleBtn" class="btn-secondary" type="button">Disconnect</button>
+                    </div>
+                    <p class="help-text">Requires a Chrome extension OAuth client ID in manifest.json.</p>
+                </div>
+                <div class="setting-item">
+                    <label for="refreshInterval">Refresh interval</label>
+                    <div class="inline-field">
+                        <input type="number" id="refreshInterval" value="10" min="5" max="60" step="1">
+                        <span>minutes</span>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <label id="themeLabel">Theme</label>
+                    <div id="themeToggle" class="segmented-control" role="radiogroup" aria-labelledby="themeLabel">
+                        <button class="segment-option" type="button" role="radio" aria-checked="false" data-theme-value="light">Day</button>
+                        <button class="segment-option" type="button" role="radio" aria-checked="true" data-theme-value="auto">Auto</button>
+                        <button class="segment-option" type="button" role="radio" aria-checked="false" data-theme-value="dark">Night</button>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <label for="weekStartDay">Week starts on</label>
+                    <select id="weekStartDay">
+                        <option value="monday">Monday</option>
+                        <option value="sunday">Sunday</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label for="currencyCode">Currency</label>
+                    <select id="currencyCode"></select>
+                </div>
+                <div class="setting-item">
+                    <label for="badgeStyle">Toolbar badge</label>
+                    <select id="badgeStyle">
+                        <option value="auto">Auto theme color</option>
+                        <option value="yellow">Yellow background / black text</option>
+                        <option value="blue">Blue background / white text</option>
+                    </select>
+                </div>
+                <p id="settingsStatus" class="settings-status" aria-live="polite"></p>
+                <button id="saveSettingsBtn" class="btn-primary" type="button">Save Settings</button>
+                <button id="useDemo" class="btn-secondary" type="button">Use Demo Data</button>
+            </div>
+        </section>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

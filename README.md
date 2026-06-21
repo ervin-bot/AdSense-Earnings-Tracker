@@ -2,6 +2,10 @@
 
 Chrome Manifest V3 extension for tracking real AdSense earnings from the toolbar. The extension now uses Chrome Identity OAuth and the AdSense Management API v2 for live data. Demo mode remains available only as an explicit fallback for UI testing.
 
+## Screenshot
+
+![AdSense Earnings Tracker live mode screenshot](docs/assets/adsense-earnings-live-mode.jpg)
+
 ## Use And Sponsorship
 
 This project is open to use, fork, and adapt under the repository license. If it

@@ -37,6 +37,7 @@ const PERIODS = Object.freeze([
     { key: 'today', rowId: 'todayRow', amountId: 'todayAmt' },
     { key: 'yesterday', rowId: 'yesterdayRow', amountId: 'yesterdayAmt' },
     { key: 'week', rowId: 'weekRow', amountId: 'weekAmt' },
+    { key: 'lastweek', rowId: 'lastweekRow', amountId: 'lastweekAmt' },
     { key: 'month', rowId: 'monthRow', amountId: 'monthAmt' },
     { key: 'days30', period: '30days', rowId: '30daysRow', amountId: '30daysAmt' },
     { key: 'lastmonth', rowId: 'lastmonthRow', amountId: 'lastmonthAmt' }
@@ -445,6 +446,7 @@ class AdSenseTracker {
             today: this.toNumber(periods.today),
             yesterday: this.toNumber(periods.yesterday),
             week: this.toNumber(periods.week),
+            lastweek: this.toNumber(periods.lastweek),
             month: this.toNumber(periods.month),
             days30: this.toNumber(periods.days30),
             lastmonth: this.toNumber(periods.lastmonth)
@@ -1165,6 +1167,8 @@ class AdSenseTracker {
         const today = this.startOfDay(new Date());
         const yesterday = this.addDays(today, -1);
         const weekStart = this.addDays(today, -this.getDaysSinceWeekStart(today, weekStartDay));
+        const lastWeekStart = this.addDays(weekStart, -7);
+        const lastWeekEnd = this.addDays(weekStart, -1);
         const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
         const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
         const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
@@ -1173,6 +1177,7 @@ class AdSenseTracker {
             today: { start: this.toApiDate(today), end: this.toApiDate(today) },
             yesterday: { start: this.toApiDate(yesterday), end: this.toApiDate(yesterday) },
             week: { start: this.toApiDate(weekStart), end: this.toApiDate(today) },
+            lastweek: { start: this.toApiDate(lastWeekStart), end: this.toApiDate(lastWeekEnd) },
             month: { start: this.toApiDate(monthStart), end: this.toApiDate(today) },
             days30: { start: this.toApiDate(this.addDays(today, -29)), end: this.toApiDate(today) },
             lastmonth: { start: this.toApiDate(lastMonthStart), end: this.toApiDate(lastMonthEnd) }
@@ -1221,6 +1226,7 @@ class AdSenseTracker {
                 today: 45.32,
                 yesterday: 40.12,
                 week: 298.45,
+                lastweek: 512.20,
                 month: 892.10,
                 days30: 1245.60,
                 lastmonth: 1100.00

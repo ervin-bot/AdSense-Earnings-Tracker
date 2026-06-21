@@ -467,6 +467,8 @@ function getDateRanges(weekStartDay = DEFAULT_SETTINGS.weekStartDay) {
     const today = startOfDay(new Date());
     const yesterday = addDays(today, -1);
     const weekStart = addDays(today, -getDaysSinceWeekStart(today, weekStartDay));
+    const lastWeekStart = addDays(weekStart, -7);
+    const lastWeekEnd = addDays(weekStart, -1);
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
     const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
     const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
@@ -475,6 +477,7 @@ function getDateRanges(weekStartDay = DEFAULT_SETTINGS.weekStartDay) {
         today: { start: toApiDate(today), end: toApiDate(today) },
         yesterday: { start: toApiDate(yesterday), end: toApiDate(yesterday) },
         week: { start: toApiDate(weekStart), end: toApiDate(today) },
+        lastweek: { start: toApiDate(lastWeekStart), end: toApiDate(lastWeekEnd) },
         month: { start: toApiDate(monthStart), end: toApiDate(today) },
         days30: { start: toApiDate(addDays(today, -29)), end: toApiDate(today) },
         lastmonth: { start: toApiDate(lastMonthStart), end: toApiDate(lastMonthEnd) }
@@ -523,6 +526,7 @@ function generateMockData(currencyCode = DEFAULT_SETTINGS.currencyCode) {
             today: 45.32,
             yesterday: 40.12,
             week: 298.45,
+            lastweek: 512.20,
             month: 892.10,
             days30: 1245.60,
             lastmonth: 1100.00
@@ -532,6 +536,7 @@ function generateMockData(currencyCode = DEFAULT_SETTINGS.currencyCode) {
             today: topSites,
             yesterday: topSites,
             week: topSites,
+            lastweek: topSites,
             month: topSites,
             days30: topSites,
             lastmonth: topSites

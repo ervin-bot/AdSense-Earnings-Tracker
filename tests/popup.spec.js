@@ -96,6 +96,7 @@ test('deduplicates www and root domains in top sites', async ({ page }) => {
                     today: 16.62,
                     yesterday: 12.24,
                     week: 42.1,
+                    lastweek: 75.4,
                     month: 98.5,
                     days30: 2320.07,
                     lastmonth: 100
@@ -134,6 +135,7 @@ test('syncs top sites with the selected period', async ({ page }) => {
                     today: 16.62,
                     yesterday: 12.24,
                     week: 42.1,
+                    lastweek: 75.4,
                     month: 98.5,
                     days30: 2320.07,
                     lastmonth: 100
@@ -144,6 +146,9 @@ test('syncs top sites with the selected period', async ({ page }) => {
                     ],
                     week: [
                         { name: 'week-site.ro', earnings: 42.1 }
+                    ],
+                    lastweek: [
+                        { name: 'previous-period.ro', earnings: 75.4 }
                     ]
                 }
             }
@@ -154,9 +159,16 @@ test('syncs top sites with the selected period', async ({ page }) => {
 
     await expect(page.getByText('today-site.ro')).toBeVisible();
     await expect(page.getByText('week-site.ro')).toHaveCount(0);
+    await expect(page.getByText('previous-period.ro')).toHaveCount(0);
 
     await page.getByRole('tab', { name: 'This Week' }).click();
 
     await expect(page.getByText('week-site.ro')).toBeVisible();
     await expect(page.getByText('today-site.ro')).toHaveCount(0);
+
+    await page.getByRole('tab', { name: 'Last Week' }).click();
+
+    await expect(page.getByText('previous-period.ro')).toBeVisible();
+    await expect(page.getByText('week-site.ro')).toHaveCount(0);
+    await expect(page.locator('#lastweekAmt')).toHaveText('€75.40');
 });

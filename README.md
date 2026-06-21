@@ -29,6 +29,7 @@ Fair-use expectations for forks and public reuse:
   - Today
   - Yesterday
   - This Week
+  - Last Week
   - This Month
   - Last 30 Days
   - Last Month
@@ -38,7 +39,7 @@ Fair-use expectations for forks and public reuse:
 - Toolbar badge updates with today's earnings and configurable logo-based colors
 - Cached popup state while data refreshes
 - Refresh interval from 5 to 60 minutes
-- Configurable week start for `This Week`, defaulting to Monday
+- Configurable week start for `This Week` and `Last Week`, defaulting to Monday
 - Day, auto, and night themes
 - Included PNG icon set in `icons/`
 

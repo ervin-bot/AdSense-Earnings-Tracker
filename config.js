@@ -84,6 +84,7 @@ const CONFIG = {
             'today',
             'yesterday',
             'week',
+            'lastweek',
             'month',
             '30days',
             'lastmonth'
@@ -151,6 +152,14 @@ function getDateRange(period) {
             const firstDay = today.getDate() - today.getDay();
             startDate.setDate(firstDay);
             startDate.setHours(0, 0, 0, 0);
+            break;
+
+        case 'lastweek':
+            const currentWeekStart = today.getDate() - today.getDay();
+            startDate.setDate(currentWeekStart - 7);
+            startDate.setHours(0, 0, 0, 0);
+            endDate.setDate(currentWeekStart - 1);
+            endDate.setHours(23, 59, 59, 999);
             break;
             
         case 'month':

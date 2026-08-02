@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">AdSense Tracker</string>
+    <string name="widget_card_name">AdSense Today Card</string>
+    <string name="widget_mini_name">AdSense Today Mini</string>
+</resources>

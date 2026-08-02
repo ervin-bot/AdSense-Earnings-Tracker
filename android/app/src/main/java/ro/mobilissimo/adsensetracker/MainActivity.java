@@ -1448,8 +1448,6 @@ public class MainActivity extends Activity {
         selectedPeriodAmount.setText("—");
         selectedPeriodComparison.setText("");
         selectedPeriodComparison.setVisibility(View.GONE);
-        selectedPeriodComparison.setText("");
-        selectedPeriodComparison.setVisibility(View.GONE);
         sitesTotal.setText("No data");
         sitesList.removeAllViews();
         trendTotal.setText("—");

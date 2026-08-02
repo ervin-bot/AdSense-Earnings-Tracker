@@ -209,6 +209,14 @@ account list succeeds, report calls use
 
 Demo mode is still present for local UI checks. It is not the default. Use Settings -> Use Demo Data if you want sample data without Google authentication.
 
+## Android App
+
+The native Android app lives in [`android/`](android/). It includes a two-stage,
+lifecycle-safe refresh, interactive 7-day and 30-day earnings trends, aligned
+period comparisons, ranked Top Sites contribution bars, and home-screen widgets.
+See [`android/README.md`](android/README.md) for OAuth setup, build requirements,
+and verification commands.
+
 ## Settings
 
 - Currency: generated from Google's official AdSense Management API Currency

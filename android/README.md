@@ -7,7 +7,7 @@ Native Android version of the AdSense earnings tracker.
 - Google sign-in with the `https://www.googleapis.com/auth/adsense.readonly` scope
 - Live AdSense Management API v2 account discovery and `reports:generate`
 - Demo mode for local UI checks
-- Same report periods as the Chrome extension:
+- Report periods:
   - Today
   - Yesterday
   - This Week

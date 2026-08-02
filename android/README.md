@@ -17,14 +17,19 @@ Native Android version of the AdSense earnings tracker.
   - Last 30 Days
   - This Year
   - Last Year
-  - Last 356 Days
-- Top 7 sites per selected period, deduplicated by root domain
+  - Last 365 Days
+- Top 7 sites per selected period, deduplicated by normalized host
+- Daily 7-day and 30-day earnings charts with an aligned previous-period comparison
+- Trend summaries with daily average, best day, percentage change, and touch details
+- Ranked Top Sites bars showing each site's share of the selected period
 - Currency selector using the official AdSense currency codes
 - Open-app refresh interval from 5 to 60 minutes
 - Pull-to-refresh gesture at the top of the earnings view
 - Background widget refresh with a smaller payload for today, yesterday, and month-to-date totals
 - Serialized foreground/background API refreshes so the fast widget payload cannot race the full in-app report
 - Lifecycle-safe cancellation, closed HTTP connections, and isolated widget/job finalization
+- Two-stage in-app refresh: totals and trend first, then an atomic full snapshot with site breakdowns
+- Account-timezone date ranges, explicit freshness status, and cached-section warnings for partial refreshes
 - Launcher icons from the generated icon pack in `app/src/main/res/mipmap-*`
 - Google Play listing icon at `playstore.png`
 

@@ -32,6 +32,7 @@ import java.net.URLEncoder;
 import java.text.NumberFormat;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.Currency;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -54,6 +55,7 @@ public class WidgetTodayRefreshJobService extends JobService {
     private static final String PREF_CURRENCY = "currencyCode";
     private static final String PREF_ADSENSE_ACCOUNT_NAME = "adsenseAccountName";
     private static final String PREF_ADSENSE_ACCOUNT_DISPLAY_NAME = "adsenseAccountDisplayName";
+    private static final String PREF_ADSENSE_TIME_ZONE = "adsenseTimeZone";
     private static final String PREF_DEMO = "useDemoMode";
     private static final String PREF_WIDGET_TODAY_AMOUNT = "widgetTodayAmount";
     private static final String PREF_WIDGET_TODAY_CHANGE = "widgetTodayChange";
@@ -318,7 +320,7 @@ public class WidgetTodayRefreshJobService extends JobService {
         String currency = normalizeCurrencyCode(prefs.getString(PREF_CURRENCY, "EUR"));
 
         if (prefs.getBoolean(PREF_DEMO, false)) {
-            saveWidgetPayload(context, 45.32, 40.12, 892.10, currency, "Demo data");
+            saveWidgetPayload(context, 45.32, 40.12, 892.10, currency, "Demo data", LocalDate.now());
             return;
         }
 
@@ -331,8 +333,15 @@ public class WidgetTodayRefreshJobService extends JobService {
 
         String accountName = prefs.getString(PREF_ADSENSE_ACCOUNT_NAME, "");
         String displayName = prefs.getString(PREF_ADSENSE_ACCOUNT_DISPLAY_NAME, accountName);
+        String reportingZoneId = prefs.getString(PREF_ADSENSE_TIME_ZONE, "");
         String token = GoogleAuthUtil.getToken(context, androidAccount, "oauth2:" + ADSENSE_SCOPE);
-        if (accountName == null || accountName.length() == 0) {
+        if (accountName == null) {
+            accountName = "";
+        }
+        if (reportingZoneId == null) {
+            reportingZoneId = "";
+        }
+        if (accountName.length() == 0 || reportingZoneId.length() == 0) {
             JSONObject accountResponse = apiFetch(context, "/accounts?pageSize=100", token, job);
             JSONArray accounts = accountResponse.optJSONArray("accounts");
             if (accounts == null || accounts.length() == 0) {
@@ -341,11 +350,24 @@ public class WidgetTodayRefreshJobService extends JobService {
             }
 
             JSONObject accountJson = accounts.getJSONObject(0);
-            accountName = accountJson.optString("name");
+            boolean storedAccountFound = accountName.length() == 0;
+            for (int index = 0; index < accounts.length(); index++) {
+                JSONObject candidate = accounts.optJSONObject(index);
+                if (candidate != null && accountName.equals(candidate.optString("name"))) {
+                    accountJson = candidate;
+                    storedAccountFound = true;
+                    break;
+                }
+            }
+            if (accountName.length() == 0 || !storedAccountFound) {
+                accountName = accountJson.optString("name");
+            }
             displayName = accountJson.optString("displayName", accountName);
+            reportingZoneId = extractAccountTimeZoneId(accountJson);
             prefs.edit()
                 .putString(PREF_ADSENSE_ACCOUNT_NAME, accountName)
                 .putString(PREF_ADSENSE_ACCOUNT_DISPLAY_NAME, displayName)
+                .putString(PREF_ADSENSE_TIME_ZONE, reportingZoneId)
                 .apply();
         }
 
@@ -357,7 +379,7 @@ public class WidgetTodayRefreshJobService extends JobService {
             displayName = accountName;
         }
 
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(parseZoneId(reportingZoneId));
         JSONObject todayReport = generateReport(context, token, accountName, new DateRange(today, today), currency, job);
         JSONObject yesterdayReport = generateReport(context, token, accountName, new DateRange(today.minusDays(1), today.minusDays(1)), currency, job);
         JSONObject monthReport = generateReport(context, token, accountName, new DateRange(today.withDayOfMonth(1), today), currency, job);
@@ -371,7 +393,7 @@ public class WidgetTodayRefreshJobService extends JobService {
         double todayAmount = extractReportTotal(todayReport);
         double yesterdayAmount = extractReportTotal(yesterdayReport);
         double monthAmount = extractReportTotal(monthReport);
-        saveWidgetPayload(context, todayAmount, yesterdayAmount, monthAmount, currency, "AdSense: " + displayName);
+        saveWidgetPayload(context, todayAmount, yesterdayAmount, monthAmount, currency, "AdSense: " + displayName, today);
     }
 
     private JSONObject generateReport(Context context, String token, String accountName, DateRange range, String currency, RunningJob job) throws IOException, JSONException {
@@ -389,6 +411,7 @@ public class WidgetTodayRefreshJobService extends JobService {
         appendParam(url, "endDate.month", String.valueOf(range.end.getMonthValue()));
         appendParam(url, "endDate.day", String.valueOf(range.end.getDayOfMonth()));
         appendParam(url, "currencyCode", currency);
+        appendParam(url, "reportingTimeZone", "ACCOUNT_TIME_ZONE");
 
         return apiFetch(context, url.toString(), token, job);
     }
@@ -523,20 +546,26 @@ public class WidgetTodayRefreshJobService extends JobService {
         double yesterday,
         double monthAmount,
         String currency,
-        String source
+        String source,
+        LocalDate reportingDate
     ) {
-        LocalDate now = LocalDate.now();
+        LocalDate now = reportingDate == null ? LocalDate.now() : reportingDate;
         int elapsedDays = Math.max(1, now.getDayOfMonth());
         int daysInMonth = YearMonth.from(now).lengthOfMonth();
-        double dailyAverage = monthAmount / elapsedDays;
-        double projected = dailyAverage * daysInMonth;
+        int completedDays = Math.max(0, elapsedDays - 1);
+        double completedEarnings = Math.max(0d, monthAmount - Math.max(0d, today));
+        double dailyAverage = completedDays > 0 ? completedEarnings / completedDays : Math.max(0d, today);
+        double projected = monthAmount + dailyAverage * Math.max(0, daysInMonth - elapsedDays);
+        String projectionMeta = completedDays > 0
+            ? "Based on " + completedDays + " complete days, " + formatCurrency(dailyAverage, currency) + "/day"
+            : "Early estimate, " + formatCurrency(dailyAverage, currency) + "/day";
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         prefs.edit()
             .putString(PREF_WIDGET_TODAY_AMOUNT, formatCurrency(today, currency))
             .putString(PREF_WIDGET_TODAY_CHANGE, formatDailyChange(today, yesterday, currency))
             .putString(PREF_WIDGET_PROJECTION_AMOUNT, formatCurrency(projected, currency))
-            .putString(PREF_WIDGET_PROJECTION_META, "Based on " + elapsedDays + "/" + daysInMonth + " days, " + formatCurrency(dailyAverage, currency) + "/day")
+            .putString(PREF_WIDGET_PROJECTION_META, projectionMeta)
             .putString(PREF_WIDGET_SOURCE, source == null ? "" : source)
             .apply();
     }
@@ -554,13 +583,9 @@ public class WidgetTodayRefreshJobService extends JobService {
             return "No comparison yet";
         }
 
-        double change = today - yesterday;
-        double percent = Math.abs((change / yesterday) * 100);
-        String prefix = change > 0 ? "+" : change < 0 ? "-" : "";
-        if (change == 0) {
-            return "No change vs yesterday";
-        }
-        return prefix + formatCurrency(Math.abs(change), currency) + " (" + prefix + String.format(Locale.US, "%.1f", percent) + "%) vs yesterday";
+        double progress = (today / yesterday) * 100d;
+        return String.format(Locale.US, "%.0f%%", progress)
+            + " of yesterday · Yesterday " + formatCurrency(yesterday, currency);
     }
 
     private static String formatCurrency(double amount, String currencyCode) {
@@ -584,6 +609,29 @@ public class WidgetTodayRefreshJobService extends JobService {
             return currencyCode;
         } catch (IllegalArgumentException error) {
             return "EUR";
+        }
+    }
+
+    private static String extractAccountTimeZoneId(JSONObject accountJson) {
+        if (accountJson == null) {
+            return "";
+        }
+        JSONObject timeZone = accountJson.optJSONObject("timeZone");
+        if (timeZone != null) {
+            return timeZone.optString("id", "");
+        }
+        return accountJson.optString("timeZone", "");
+    }
+
+    private static ZoneId parseZoneId(String zoneId) {
+        if (zoneId == null || zoneId.trim().length() == 0) {
+            return ZoneId.systemDefault();
+        }
+        try {
+            return ZoneId.of(zoneId.trim());
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unknown AdSense reporting timezone: " + zoneId, error);
+            return ZoneId.systemDefault();
         }
     }
 

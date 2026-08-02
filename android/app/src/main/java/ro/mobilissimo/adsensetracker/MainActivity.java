@@ -15,6 +15,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -58,8 +59,11 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.text.NumberFormat;
 import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Currency;
@@ -68,6 +72,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.OptionalDouble;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -82,11 +87,14 @@ public class MainActivity extends Activity {
     private static final int RC_SIGN_IN = 4201;
     private static final int RC_AUTH_RECOVERY = 4202;
     private static final int TOP_SITES_REPORT_LIMIT = 25;
+    private static final DateTimeFormatter UPDATED_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
+    private static final DateTimeFormatter TREND_LABEL_FORMAT = DateTimeFormatter.ofPattern("d MMM", Locale.US);
 
     private static final String PREFS = "adsense_tracker";
     private static final String PREF_CURRENCY = "currencyCode";
     private static final String PREF_ADSENSE_ACCOUNT_NAME = "adsenseAccountName";
     private static final String PREF_ADSENSE_ACCOUNT_DISPLAY_NAME = "adsenseAccountDisplayName";
+    private static final String PREF_ADSENSE_TIME_ZONE = "adsenseTimeZone";
     private static final String PREF_WEEK_START = "weekStartDay";
     private static final String PREF_REFRESH = "refreshInterval";
     private static final String PREF_DEMO = "useDemoMode";
@@ -101,12 +109,15 @@ public class MainActivity extends Activity {
     private static final int BG_SECONDARY = 0xFFF6F8FB;
     private static final int BG_TERTIARY = 0xFFEEF2F7;
     private static final int BORDER = 0xFFDBE3EE;
-    private static final int ACCENT = 0xFF4285F4;
-    private static final int ACCENT_STRONG = 0xFF2563EB;
-    private static final int SUCCESS = 0xFF16A34A;
+    private static final int ACCENT = 0xFF2563EB;
+    private static final int ACCENT_STRONG = 0xFF1D4ED8;
+    private static final int SUCCESS = 0xFF15803D;
     private static final int SUCCESS_SOFT = 0xFFDCFCE7;
     private static final int WARNING_TEXT = 0xFF92400E;
     private static final int WARNING_SOFT = 0xFFFEF3C7;
+    private static final int ERROR_TEXT = 0xFF991B1B;
+    private static final int ERROR_SOFT = 0xFFFEF2F2;
+    private static final int ERROR_BORDER = 0xFFFCA5A5;
 
     private static final CurrencyOption[] CURRENCIES = new CurrencyOption[] {
         new CurrencyOption("AED", "United Arab Emirates Dirham"),
@@ -241,7 +252,12 @@ public class MainActivity extends Activity {
         new Period("days30", "Last 30 Days"),
         new Period("year", "This Year"),
         new Period("lastyear", "Last Year"),
-        new Period("days356", "Last 356 Days")
+        new Period("days365", "Last 365 Days")
+    };
+
+    private static final Period[] TREND_PERIODS = new Period[] {
+        new Period("days7", "7D"),
+        new Period("days30", "30D")
     };
 
     private SharedPreferences prefs;
@@ -250,11 +266,13 @@ public class MainActivity extends Activity {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Map<String, TextView> periodButtons = new HashMap<>();
+    private final Map<String, TextView> trendButtons = new HashMap<>();
     private final Object connectionLock = new Object();
     private final RefreshRequestTracker refreshRequests = new RefreshRequestTracker();
 
     private String currentCurrency = "EUR";
     private String currentPeriod = "today";
+    private String currentTrendPeriod = "days30";
     private ReportData lastData;
     private Future<?> activeRefresh;
     private HttpURLConnection activeConnection;
@@ -265,10 +283,13 @@ public class MainActivity extends Activity {
     private boolean isPullingToRefresh;
     private boolean pullRefreshArmed;
     private boolean pullRefreshActive;
+    private boolean pullRefreshGestureRejected;
+    private float pullRefreshStartX;
     private float pullRefreshStartY;
     private int pullRefreshTouchSlop;
 
     private TextView modeBadge;
+    private TextView syncStatusText;
     private LinearLayout pullRefreshIndicator;
     private TextView pullRefreshText;
     private FrameLayout refreshButton;
@@ -280,6 +301,11 @@ public class MainActivity extends Activity {
     private TextView projectionMeta;
     private TextView selectedPeriodLabel;
     private TextView selectedPeriodAmount;
+    private TextView selectedPeriodComparison;
+    private EarningsTrendView trendView;
+    private TextView trendTotal;
+    private TextView trendComparison;
+    private TextView trendMeta;
     private TextView sitesTotal;
     private LinearLayout statusBox;
     private LinearLayout sitesList;
@@ -304,7 +330,9 @@ public class MainActivity extends Activity {
         } else if (account != null) {
             loadData();
         } else {
+            displayEmptyState();
             setStatus("Connect Google or use demo data.");
+            setSyncStatus("Not connected");
             updateModeBadge("Not connected");
         }
     }
@@ -353,7 +381,7 @@ public class MainActivity extends Activity {
     private void buildUi() {
         ScrollView scrollView = new PullRefreshScrollView(this);
         scrollView.setFillViewport(false);
-        scrollView.setBackgroundColor(BG_PRIMARY);
+        scrollView.setBackgroundColor(BG_SECONDARY);
         pullRefreshTouchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
 
         LinearLayout root = new LinearLayout(this);
@@ -390,16 +418,22 @@ public class MainActivity extends Activity {
         titleBlock.addView(title);
         modeBadge = badgeText("");
         titleBlock.addView(modeBadge);
+        syncStatusText = text("Waiting for data", 11, TEXT_SECONDARY, Typeface.NORMAL);
+        syncStatusText.setPadding(0, dp(3), 0, 0);
+        syncStatusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        titleBlock.addView(syncStatusText);
 
         LinearLayout headerActions = horizontal();
         headerActions.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(headerActions);
 
         refreshButton = headerIconButton(R.drawable.ic_refresh, true);
+        refreshButton.setContentDescription("Refresh earnings");
         refreshButton.setOnClickListener(view -> loadData());
         headerActions.addView(refreshButton);
 
         FrameLayout settingsButton = headerIconButton(R.drawable.ic_settings, false);
+        settingsButton.setContentDescription("Open settings");
         settingsButton.setOnClickListener(view -> showSettingsDialog());
         headerActions.addView(settingsButton);
 
@@ -424,12 +458,19 @@ public class MainActivity extends Activity {
         actionRow.addView(demoButton);
         updateActionVisibility();
 
-        LinearLayout highlight = card(ACCENT, ACCENT);
+        statusBox = card(WARNING_SOFT, 0xFFFDBA74);
+        statusBox.setVisibility(View.GONE);
+        root.addView(statusBox, matchWrapWithTop(10));
+        statusText = text("", 12, WARNING_TEXT, Typeface.BOLD);
+        statusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        statusBox.addView(statusText);
+
+        LinearLayout highlight = card(ACCENT_STRONG, ACCENT_STRONG);
         highlight.setPadding(dp(18), dp(18), dp(18), dp(18));
         root.addView(highlight, matchWrapWithTop(12));
-        TextView todayLabel = text("Today's earnings", 12, Color.WHITE, Typeface.BOLD);
+        TextView todayLabel = text("Today so far · estimated", 12, Color.WHITE, Typeface.BOLD);
         highlight.addView(todayLabel);
-        todayAmount = text(formatCurrency(0), 34, Color.WHITE, Typeface.BOLD);
+        todayAmount = text("—", 34, Color.WHITE, Typeface.BOLD);
         todayAmount.setPadding(0, dp(5), 0, 0);
         highlight.addView(todayAmount);
         todayChange = text("No comparison yet", 12, Color.WHITE, Typeface.NORMAL);
@@ -444,19 +485,67 @@ public class MainActivity extends Activity {
         projectionCopy.addView(text("Projected month", 13, Color.WHITE, Typeface.BOLD));
         projectionMeta = text("Based on daily average", 11, Color.argb(220, 255, 255, 255), Typeface.NORMAL);
         projectionCopy.addView(projectionMeta);
-        projectionAmount = text(formatCurrency(0), 20, Color.WHITE, Typeface.BOLD);
-        projectionAmount.setGravity(Gravity.RIGHT);
+        projectionAmount = text("—", 20, Color.WHITE, Typeface.BOLD);
+        projectionAmount.setGravity(Gravity.END);
         projectionRow.addView(projectionAmount);
+
+        LinearLayout trendCard = card(BG_PRIMARY, BORDER);
+        root.addView(trendCard, matchWrapWithTop(14));
+
+        LinearLayout trendHeader = horizontal();
+        trendHeader.setGravity(Gravity.CENTER_VERTICAL);
+        trendCard.addView(trendHeader, matchWrap());
+        trendHeader.addView(text("Completed-day trend", 15, TEXT_PRIMARY, Typeface.BOLD), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        trendTotal = text("—", 16, TEXT_PRIMARY, Typeface.BOLD);
+        trendTotal.setGravity(Gravity.END);
+        trendHeader.addView(trendTotal);
+
+        HorizontalScrollView trendTabScroller = new HorizontalScrollView(this);
+        trendTabScroller.setHorizontalScrollBarEnabled(false);
+        LinearLayout trendTabs = horizontal();
+        trendTabs.setPadding(0, dp(12), 0, dp(6));
+        trendTabScroller.addView(trendTabs);
+        trendCard.addView(trendTabScroller, matchWrap());
+
+        for (Period period : TREND_PERIODS) {
+            TextView tab = periodButton(period.label);
+            tab.setOnClickListener(view -> selectTrendPeriod(period.key));
+            trendButtons.put(period.key, tab);
+            trendTabs.addView(tab);
+        }
+
+        trendView = new EarningsTrendView(this);
+        trendView.setContentDescription("Daily AdSense earnings trend");
+        trendCard.addView(trendView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
+
+        TextView trendLegend = text("Blue: current period   ·   Dashed: previous period", 11, TEXT_SECONDARY, Typeface.NORMAL);
+        trendLegend.setPadding(0, dp(3), 0, 0);
+        trendCard.addView(trendLegend);
+
+        trendComparison = text("No comparable trend yet", 12, TEXT_SECONDARY, Typeface.NORMAL);
+        trendComparison.setPadding(0, dp(8), 0, 0);
+        trendCard.addView(trendComparison);
+        trendMeta = text("Completed days · tap the chart for details", 11, TEXT_SECONDARY, Typeface.NORMAL);
+        trendMeta.setPadding(0, dp(4), 0, 0);
+        trendCard.addView(trendMeta);
+
+        TextView periodSectionTitle = text("Period breakdown", 14, TEXT_PRIMARY, Typeface.BOLD);
+        root.addView(periodSectionTitle, matchWrapWithTop(18));
 
         HorizontalScrollView tabScroller = new HorizontalScrollView(this);
         tabScroller.setHorizontalScrollBarEnabled(false);
         LinearLayout tabs = horizontal();
         tabScroller.addView(tabs);
-        root.addView(tabScroller, matchWrapWithTop(14));
+        root.addView(tabScroller, matchWrapWithTop(8));
 
         for (Period period : PERIODS) {
             TextView tab = periodButton(period.label);
-            tab.setOnClickListener(view -> switchPeriod(period.key));
+            tab.setOnClickListener(view -> {
+                switchPeriod(period.key);
+                if (trendButtons.containsKey(period.key)) {
+                    selectTrendPeriod(period.key);
+                }
+            });
             periodButtons.put(period.key, tab);
             tabs.addView(tab);
         }
@@ -465,28 +554,29 @@ public class MainActivity extends Activity {
         root.addView(periodCard, matchWrapWithTop(12));
         selectedPeriodLabel = text("Today", 13, TEXT_SECONDARY, Typeface.BOLD);
         periodCard.addView(selectedPeriodLabel);
-        selectedPeriodAmount = text(formatCurrency(0), 22, TEXT_PRIMARY, Typeface.BOLD);
-        selectedPeriodAmount.setGravity(Gravity.RIGHT);
+        selectedPeriodAmount = text("—", 22, TEXT_PRIMARY, Typeface.BOLD);
+        selectedPeriodAmount.setGravity(Gravity.END);
         periodCard.addView(selectedPeriodAmount);
+        selectedPeriodComparison = text("", 12, TEXT_SECONDARY, Typeface.NORMAL);
+        selectedPeriodComparison.setPadding(0, dp(5), 0, 0);
+        periodCard.addView(selectedPeriodComparison);
 
         LinearLayout sitesHeader = horizontal();
         sitesHeader.setPadding(0, dp(18), 0, dp(8));
         root.addView(sitesHeader, matchWrap());
         sitesHeader.addView(text("Top 7 Sites", 14, TEXT_PRIMARY, Typeface.BOLD), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        sitesTotal = text(formatCurrency(0) + " total", 11, TEXT_SECONDARY, Typeface.BOLD);
-        sitesTotal.setGravity(Gravity.RIGHT);
+        sitesTotal = text("No data", 11, TEXT_SECONDARY, Typeface.BOLD);
+        sitesTotal.setGravity(Gravity.END);
         sitesHeader.addView(sitesTotal);
 
+        LinearLayout sitesCard = card(BG_PRIMARY, BORDER);
+        sitesCard.setPadding(dp(14), dp(6), dp(14), dp(14));
+        root.addView(sitesCard, matchWrap());
         sitesList = vertical();
-        root.addView(sitesList, matchWrap());
-
-        statusBox = card(WARNING_SOFT, 0xFFFDBA74);
-        statusBox.setVisibility(View.GONE);
-        root.addView(statusBox, matchWrapWithTop(14));
-        statusText = text("", 12, WARNING_TEXT, Typeface.BOLD);
-        statusBox.addView(statusText);
+        sitesCard.addView(sitesList, matchWrap());
 
         switchPeriod(currentPeriod);
+        selectTrendPeriod(currentTrendPeriod);
     }
 
     private boolean handlePullToRefreshTouch(ScrollView scrollView, MotionEvent event) {
@@ -496,14 +586,26 @@ public class MainActivity extends Activity {
 
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
+            pullRefreshStartX = event.getX();
             pullRefreshStartY = event.getY();
             isPullingToRefresh = false;
             pullRefreshArmed = false;
+            pullRefreshGestureRejected = false;
             return false;
         }
 
         if (action == MotionEvent.ACTION_MOVE) {
+            float deltaX = event.getX() - pullRefreshStartX;
             float deltaY = event.getY() - pullRefreshStartY;
+            if (pullRefreshGestureRejected) {
+                return false;
+            }
+            if (!isPullingToRefresh
+                && Math.max(Math.abs(deltaX), Math.abs(deltaY)) >= pullRefreshTouchSlop
+                && deltaY <= Math.abs(deltaX) * 1.2f) {
+                pullRefreshGestureRejected = true;
+                return false;
+            }
             if (deltaY <= 0 || scrollView.getScrollY() > 0) {
                 if (isPullingToRefresh && !pullRefreshActive) {
                     resetPullRefreshIndicator();
@@ -529,6 +631,10 @@ public class MainActivity extends Activity {
         }
 
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            if (pullRefreshGestureRejected) {
+                pullRefreshGestureRejected = false;
+                return false;
+            }
             if (!isPullingToRefresh) {
                 return false;
             }
@@ -616,6 +722,7 @@ public class MainActivity extends Activity {
             displayEmptyState();
             updateModeBadge("Not connected");
             setStatus("Disconnected.");
+            setSyncStatus("Not connected");
         });
     }
 
@@ -631,6 +738,7 @@ public class MainActivity extends Activity {
 
         if (account == null) {
             setStatus("Connect Google before loading live AdSense data.");
+            setSyncStatus("Not connected");
             updateModeBadge("Not connected");
             return;
         }
@@ -639,6 +747,7 @@ public class MainActivity extends Activity {
             updateModeBadge("Live mode");
         }
         setStatus("");
+        setSyncStatus(lastData == null ? "Loading earnings…" : "Updating totals…");
         setLoading(true);
         long generation = refreshRequests.begin();
         GoogleSignInAccount refreshAccount = account;
@@ -652,18 +761,28 @@ public class MainActivity extends Activity {
                     RefreshCoordinator.acquireForeground();
                     coordinatorAcquired = true;
                     String token = getAccessToken(refreshAccount);
-                    ReportData data = fetchFromAdSenseApi(token, refreshCurrency, fallbackData);
-                    runOnUiThreadIfActive(generation, () -> applyRefreshSuccess(data));
+                    ReportData data = fetchFromAdSenseApi(token, refreshCurrency, fallbackData, generation);
+                    runOnUiThreadIfActive(generation, () -> {
+                        activeRefresh = null;
+                        applyRefreshSuccess(data);
+                    });
                 } catch (UserRecoverableAuthException recoverable) {
                     runOnUiThreadIfActive(generation, () -> {
+                        activeRefresh = null;
                         setLoading(false);
                         startActivityForResult(recoverable.getIntent(), RC_AUTH_RECOVERY);
                     });
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
-                    runOnUiThreadIfActive(generation, () -> setLoadingSafely(false));
+                    runOnUiThreadIfActive(generation, () -> {
+                        activeRefresh = null;
+                        setLoadingSafely(false);
+                    });
                 } catch (Exception error) {
-                    runOnUiThreadIfActive(generation, () -> applyRefreshFailure(error));
+                    runOnUiThreadIfActive(generation, () -> {
+                        activeRefresh = null;
+                        applyRefreshFailure(error);
+                    });
                 } finally {
                     if (coordinatorAcquired) {
                         RefreshCoordinator.release();
@@ -681,7 +800,6 @@ public class MainActivity extends Activity {
             if (activityDestroyed || !refreshRequests.isCurrent(generation) || isFinishing() || isDestroyed()) {
                 return;
             }
-            activeRefresh = null;
             try {
                 action.run();
             } catch (RuntimeException error) {
@@ -699,6 +817,15 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void applyFastRefresh(ReportData data) {
+        try {
+            displayDashboardData(data, data.source, "Live mode", false);
+            setSyncStatus("Totals ready · Updating site breakdowns…");
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Could not apply the fast earnings refresh.", error);
+        }
+    }
+
     private void displayDataSafely(ReportData data, String source, String mode) {
         try {
             displayData(data, source, mode);
@@ -713,7 +840,8 @@ public class MainActivity extends Activity {
         try {
             updateModeBadge("Needs attention");
             String message = error.getMessage();
-            setStatus(message == null || message.length() == 0 ? "Failed to load AdSense data." : message);
+            setStatus(message == null || message.length() == 0 ? "Failed to load AdSense data." : message, true);
+            setSyncStatus(lastData == null ? "Update failed" : "Showing last successful data");
         } catch (RuntimeException uiError) {
             Log.e(TAG, "Could not display the refresh error.", uiError);
         }
@@ -736,7 +864,12 @@ public class MainActivity extends Activity {
         return GoogleAuthUtil.getToken(getApplicationContext(), androidAccount, "oauth2:" + ADSENSE_SCOPE);
     }
 
-    private ReportData fetchFromAdSenseApi(String token, String requestedCurrency, ReportData fallbackData) throws IOException, JSONException {
+    private ReportData fetchFromAdSenseApi(
+        String token,
+        String requestedCurrency,
+        ReportData fallbackData,
+        long generation
+    ) throws IOException, JSONException, InterruptedException {
         JSONObject accountResponse = apiFetch("/accounts?pageSize=100", token);
         JSONArray accounts = accountResponse.optJSONArray("accounts");
         if (accounts == null || accounts.length() == 0) {
@@ -749,31 +882,82 @@ public class MainActivity extends Activity {
             throw new IOException("The AdSense account response is missing the account name.");
         }
 
-        Map<String, DateRange> ranges = getDateRanges();
+        ZoneId reportingZone = parseZoneId(extractAccountTimeZoneId(accountJson));
+        LocalDate reportingDate = LocalDate.now(reportingZone);
+        Map<String, DateRange> ranges = getDateRanges(reportingDate);
         ReportData result = new ReportData();
         result.currency = requestedCurrency;
         result.accountName = accountName;
         result.accountDisplayName = accountJson.optString("displayName", accountName);
+        result.reportingZoneId = reportingZone.getId();
+        result.reportingDate = reportingDate;
+        result.weekStartSetting = prefs.getString(PREF_WEEK_START, "monday");
         result.source = "AdSense: " + result.accountDisplayName;
+        ReportData compatibleFallback = isFallbackCompatible(fallbackData, result, requestedCurrency)
+            ? fallbackData
+            : null;
         List<String> refreshWarnings = new ArrayList<>();
         Exception firstPeriodError = null;
         int successfulPeriodReports = 0;
+        boolean dailyTrendLoaded = false;
 
-        for (Map.Entry<String, DateRange> entry : ranges.entrySet()) {
-            try {
-                JSONObject report = generateReport(token, accountName, entry.getValue(), null, null, 0, requestedCurrency);
-                String reportCurrency = extractCurrency(report);
-                if (reportCurrency.length() > 0) {
-                    result.currency = reportCurrency;
+        try {
+            DateRange dailyRange = new DateRange(
+                reportingDate.minusYears(1).withDayOfYear(1),
+                reportingDate
+            );
+            JSONObject dailyReport = generateReport(
+                token,
+                accountName,
+                dailyRange,
+                new String[] { "DATE" },
+                new String[] { "+DATE" },
+                1000,
+                requestedCurrency
+            );
+            String reportCurrency = extractCurrency(dailyReport);
+            if (reportCurrency.length() > 0) {
+                result.currency = reportCurrency;
+            }
+            result.dailyEarnings.putAll(extractDailyEarnings(dailyReport));
+            for (Map.Entry<String, DateRange> entry : ranges.entrySet()) {
+                result.periods.put(
+                    entry.getKey(),
+                    TrendCalculator.sum(result.dailyEarnings, entry.getValue().start, entry.getValue().end)
+                );
+            }
+            successfulPeriodReports = ranges.size();
+            dailyTrendLoaded = true;
+        } catch (Exception error) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Refresh was cancelled.");
+            }
+            if (compatibleFallback != null) {
+                result.dailyEarnings.putAll(compatibleFallback.dailyEarnings);
+            }
+            refreshWarnings.add("daily trend");
+        }
+
+        if (!dailyTrendLoaded) {
+            for (Map.Entry<String, DateRange> entry : ranges.entrySet()) {
+                try {
+                    JSONObject report = generateReport(token, accountName, entry.getValue(), null, null, 0, requestedCurrency);
+                    String reportCurrency = extractCurrency(report);
+                    if (reportCurrency.length() > 0) {
+                        result.currency = reportCurrency;
+                    }
+                    result.periods.put(entry.getKey(), extractReportTotal(report));
+                    successfulPeriodReports++;
+                } catch (Exception error) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException("Refresh was cancelled.");
+                    }
+                    if (firstPeriodError == null) {
+                        firstPeriodError = error;
+                    }
+                    result.periods.put(entry.getKey(), fallbackPeriodAmount(compatibleFallback, entry.getKey()));
+                    refreshWarnings.add(periodLabel(entry.getKey()) + " total");
                 }
-                result.periods.put(entry.getKey(), extractReportTotal(report));
-                successfulPeriodReports++;
-            } catch (Exception error) {
-                if (firstPeriodError == null) {
-                    firstPeriodError = error;
-                }
-                result.periods.put(entry.getKey(), fallbackPeriodAmount(fallbackData, entry.getKey()));
-                refreshWarnings.add(periodLabel(entry.getKey()) + " total");
             }
         }
 
@@ -786,6 +970,14 @@ public class MainActivity extends Activity {
             }
             throw new IOException(firstPeriodError.getMessage() == null ? "Failed to refresh AdSense reports." : firstPeriodError.getMessage());
         }
+
+        result.updatedAtEpochMs = System.currentTimeMillis();
+        ReportData fastSnapshot = result.copy();
+        for (Period period : PERIODS) {
+            fastSnapshot.topSitesByPeriod.put(period.key, fallbackTopSites(compatibleFallback, period.key));
+        }
+        fastSnapshot.warning = formatPartialRefreshWarning(refreshWarnings);
+        runOnUiThreadIfActive(generation, () -> applyFastRefresh(fastSnapshot));
 
         for (Map.Entry<String, DateRange> entry : ranges.entrySet()) {
             try {
@@ -804,7 +996,10 @@ public class MainActivity extends Activity {
                 }
                 result.topSitesByPeriod.put(entry.getKey(), extractTopSites(report));
             } catch (Exception error) {
-                result.topSitesByPeriod.put(entry.getKey(), fallbackTopSites(fallbackData, entry.getKey()));
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedException("Refresh was cancelled.");
+                }
+                result.topSitesByPeriod.put(entry.getKey(), fallbackTopSites(compatibleFallback, entry.getKey()));
                 refreshWarnings.add(periodLabel(entry.getKey()) + " top sites");
             }
         }
@@ -849,6 +1044,7 @@ public class MainActivity extends Activity {
         appendParam(url, "endDate.month", String.valueOf(range.end.getMonthValue()));
         appendParam(url, "endDate.day", String.valueOf(range.end.getDayOfMonth()));
         appendParam(url, "currencyCode", requestedCurrency);
+        appendParam(url, "reportingTimeZone", "ACCOUNT_TIME_ZONE");
 
         if (limit > 0) {
             appendParam(url, "limit", String.valueOf(limit));
@@ -1010,6 +1206,59 @@ public class MainActivity extends Activity {
         return 0;
     }
 
+    private Map<LocalDate, Double> extractDailyEarnings(JSONObject report) throws JSONException {
+        Map<LocalDate, Double> daily = new LinkedHashMap<>();
+        int dateIndex = -1;
+        int amountIndex = -1;
+        JSONArray headers = report.optJSONArray("headers");
+        if (headers == null) {
+            throw new JSONException("Daily report is missing its headers.");
+        }
+        for (int i = 0; i < headers.length(); i++) {
+            JSONObject header = headers.optJSONObject(i);
+            String name = header == null ? "" : header.optString("name", "");
+            if ("DATE".equals(name)) {
+                dateIndex = i;
+            } else if ("ESTIMATED_EARNINGS".equals(name)) {
+                amountIndex = i;
+            }
+        }
+        if (dateIndex < 0 || amountIndex < 0) {
+            throw new JSONException("Daily report is missing DATE or ESTIMATED_EARNINGS.");
+        }
+
+        JSONArray rows = report.optJSONArray("rows");
+        if (rows == null) {
+            return daily;
+        }
+
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            JSONArray cells = row == null ? null : row.optJSONArray("cells");
+            if (cells == null || dateIndex >= cells.length() || amountIndex >= cells.length()) {
+                throw new JSONException("Daily report contains an incomplete row.");
+            }
+
+            JSONObject dateCell = cells.optJSONObject(dateIndex);
+            JSONObject amountCell = cells.optJSONObject(amountIndex);
+            if (dateCell == null || amountCell == null) {
+                throw new JSONException("Daily report contains an invalid cell.");
+            }
+
+            try {
+                LocalDate date = LocalDate.parse(dateCell.optString("value", ""));
+                double amount = Double.parseDouble(amountCell.optString("value", "0"));
+                if (!Double.isFinite(amount)) {
+                    throw new NumberFormatException("Non-finite earnings");
+                }
+                daily.put(date, amount);
+            } catch (RuntimeException ignored) {
+                throw new JSONException("Daily report contains an invalid date or amount.");
+            }
+        }
+        return daily;
+    }
+
     private List<SiteEarnings> extractTopSites(JSONObject report) {
         JSONArray rows = report.optJSONArray("rows");
         if (rows == null) {
@@ -1055,9 +1304,31 @@ public class MainActivity extends Activity {
         return "";
     }
 
-    private Map<String, DateRange> getDateRanges() {
+    private String extractAccountTimeZoneId(JSONObject accountJson) {
+        if (accountJson == null) {
+            return "";
+        }
+        JSONObject timeZone = accountJson.optJSONObject("timeZone");
+        if (timeZone != null) {
+            return timeZone.optString("id", "");
+        }
+        return accountJson.optString("timeZone", "");
+    }
+
+    private ZoneId parseZoneId(String zoneId) {
+        if (zoneId == null || zoneId.trim().length() == 0) {
+            return ZoneId.systemDefault();
+        }
+        try {
+            return ZoneId.of(zoneId.trim());
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unknown AdSense reporting timezone: " + zoneId, error);
+            return ZoneId.systemDefault();
+        }
+    }
+
+    private Map<String, DateRange> getDateRanges(LocalDate today) {
         String weekStartSetting = prefs.getString(PREF_WEEK_START, "monday");
-        LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
         LocalDate weekStart = today.minusDays(daysSinceWeekStart(today, weekStartSetting));
         LocalDate lastWeekStart = weekStart.minusDays(7);
@@ -1079,7 +1350,7 @@ public class MainActivity extends Activity {
         ranges.put("days30", new DateRange(today.minusDays(29), today));
         ranges.put("year", new DateRange(yearStart, today));
         ranges.put("lastyear", new DateRange(lastYearStart, lastYearEnd));
-        ranges.put("days356", new DateRange(today.minusDays(355), today));
+        ranges.put("days365", new DateRange(today.minusDays(364), today));
         return ranges;
     }
 
@@ -1093,46 +1364,60 @@ public class MainActivity extends Activity {
     }
 
     private ReportData generateMockData() {
-        List<SiteEarnings> topSites = new ArrayList<>();
-        topSites.add(new SiteEarnings("example1.com", 234.50));
-        topSites.add(new SiteEarnings("tech-blog.io", 189.30));
-        topSites.add(new SiteEarnings("news-site.net", 145.20));
-        topSites.add(new SiteEarnings("tutorials.dev", 98.15));
-        topSites.add(new SiteEarnings("reviews.shop", 76.45));
-        topSites.add(new SiteEarnings("lifestyle.com", 54.30));
-        topSites.add(new SiteEarnings("gaming-hub.co", 42.18));
-        topSites.add(new SiteEarnings("fitness.app", 35.90));
-        topSites.add(new SiteEarnings("travel.guide", 28.75));
-
         ReportData data = new ReportData();
         data.currency = currentCurrency;
         data.source = "Demo data";
-        data.periods.put("today", 45.32);
-        data.periods.put("yesterday", 40.12);
-        data.periods.put("week", 298.45);
-        data.periods.put("lastweek", 276.80);
-        data.periods.put("month", 892.10);
-        data.periods.put("lastmonth", 1100.00);
-        data.periods.put("days30", 1245.60);
-        data.periods.put("year", 5200.40);
-        data.periods.put("lastyear", 18420.75);
-        data.periods.put("days356", 17140.25);
+        data.reportingZoneId = ZoneId.systemDefault().getId();
+        data.weekStartSetting = prefs.getString(PREF_WEEK_START, "monday");
+        data.reportingDate = LocalDate.now();
+        data.updatedAtEpochMs = System.currentTimeMillis();
+        LocalDate seriesStart = data.reportingDate.minusYears(1).withDayOfYear(1);
+        int seriesDay = 0;
+        for (LocalDate date = seriesStart; !date.isAfter(data.reportingDate); date = date.plusDays(1)) {
+            double wave = Math.sin(seriesDay * 0.72d) * 8.5d;
+            double weekdayLift = date.getDayOfWeek().getValue() <= 5 ? 6.5d : -2.5d;
+            double amount = Math.max(4d, 28d + wave + weekdayLift + seriesDay * 0.025d);
+            data.dailyEarnings.put(date, Math.round(amount * 100d) / 100d);
+            seriesDay++;
+        }
+        data.dailyEarnings.put(data.reportingDate.minusDays(1), 40.12d);
+        data.dailyEarnings.put(data.reportingDate, 45.32d);
 
-        for (Period period : PERIODS) {
-            data.topSitesByPeriod.put(period.key, topSites);
+        for (Map.Entry<String, DateRange> entry : getDateRanges(data.reportingDate).entrySet()) {
+            double total = TrendCalculator.sum(data.dailyEarnings, entry.getValue().start, entry.getValue().end);
+            data.periods.put(entry.getKey(), total);
+            data.topSitesByPeriod.put(entry.getKey(), generateMockSites(total));
         }
 
         return data;
     }
 
+    private List<SiteEarnings> generateMockSites(double periodTotal) {
+        String[] names = new String[] {
+            "example1.com", "tech-blog.io", "news-site.net", "tutorials.dev",
+            "reviews.shop", "lifestyle.com", "gaming-hub.co"
+        };
+        double[] shares = new double[] { 0.28d, 0.22d, 0.16d, 0.11d, 0.08d, 0.05d, 0.03d };
+        List<SiteEarnings> sites = new ArrayList<>();
+        for (int i = 0; i < names.length; i++) {
+            sites.add(new SiteEarnings(names[i], Math.round(periodTotal * shares[i] * 100d) / 100d));
+        }
+        return sites;
+    }
+
     private void displayData(ReportData data, String source, String mode) {
+        displayDashboardData(data, source, mode, true);
+    }
+
+    private void displayDashboardData(ReportData data, String source, String mode, boolean refreshComplete) {
         lastData = data;
         currentCurrency = normalizeCurrencyCode(data.currency);
         SharedPreferences.Editor editor = prefs.edit().putString(PREF_CURRENCY, currentCurrency);
         if (data.accountName != null && data.accountName.length() > 0) {
             editor
                 .putString(PREF_ADSENSE_ACCOUNT_NAME, data.accountName)
-                .putString(PREF_ADSENSE_ACCOUNT_DISPLAY_NAME, data.accountDisplayName);
+                .putString(PREF_ADSENSE_ACCOUNT_DISPLAY_NAME, data.accountDisplayName)
+                .putString(PREF_ADSENSE_TIME_ZONE, data.reportingZoneId);
         }
         editor.apply();
 
@@ -1140,25 +1425,39 @@ public class MainActivity extends Activity {
         double yesterday = getPeriodAmount("yesterday");
         todayAmount.setText(formatCurrency(today));
         renderDailyChange(today, yesterday);
-        renderProjection(getPeriodAmount("month"));
-        updateModeBadge(mode);
+        renderProjection(getPeriodAmount("month"), today, data.reportingDate);
+        updateModeBadge(data.warning == null || data.warning.length() == 0 ? mode : "Needs attention");
         connectButton.setText("Connect");
         updateActionVisibility();
-        setStatus(data.warning != null && data.warning.length() > 0 ? data.warning : source);
+        setStatus(data.warning == null ? "" : data.warning, false);
         saveWidgetSnapshot(source);
         switchPeriod(currentPeriod);
-        scheduleNextRefresh();
+        renderTrend();
+        if (refreshComplete) {
+            setSyncStatus(formatUpdatedStatus(data));
+            scheduleNextRefresh();
+        }
     }
 
     private void displayEmptyState() {
-        todayAmount.setText(formatCurrency(0));
+        todayAmount.setText("—");
         todayChange.setText("No comparison yet");
-        projectionAmount.setText(formatCurrency(0));
+        projectionAmount.setText("—");
         projectionMeta.setText("Based on daily average");
         selectedPeriodLabel.setText(periodLabel(currentPeriod));
-        selectedPeriodAmount.setText(formatCurrency(0));
-        sitesTotal.setText(formatCurrency(0) + " total");
+        selectedPeriodAmount.setText("—");
+        selectedPeriodComparison.setText("");
+        selectedPeriodComparison.setVisibility(View.GONE);
+        selectedPeriodComparison.setText("");
+        selectedPeriodComparison.setVisibility(View.GONE);
+        sitesTotal.setText("No data");
         sitesList.removeAllViews();
+        trendTotal.setText("—");
+        trendComparison.setText("No comparable trend yet");
+        trendComparison.setTextColor(TEXT_SECONDARY);
+        trendMeta.setText("Completed days · tap the chart for details");
+        trendView.setSeries(Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), currentCurrency);
+        setSyncStatus("No earnings loaded");
         saveWidgetSnapshot("Open app to refresh");
     }
 
@@ -1192,75 +1491,338 @@ public class MainActivity extends Activity {
         currentPeriod = periodKey;
         for (Map.Entry<String, TextView> entry : periodButtons.entrySet()) {
             boolean active = entry.getKey().equals(periodKey);
+            entry.getValue().setSelected(active);
+            entry.getValue().setContentDescription(periodLabel(entry.getKey()) + (active ? ", selected" : ""));
             entry.getValue().setTextColor(active ? Color.WHITE : TEXT_PRIMARY);
             entry.getValue().setBackground(buttonBackground(active ? ACCENT_STRONG : BG_SECONDARY, active ? ACCENT_STRONG : BORDER));
         }
 
         selectedPeriodLabel.setText(periodLabel(periodKey));
+        if (lastData == null) {
+            selectedPeriodAmount.setText("—");
+            selectedPeriodComparison.setText("");
+            selectedPeriodComparison.setVisibility(View.GONE);
+            renderTopSites(periodKey);
+            return;
+        }
         selectedPeriodAmount.setText(formatCurrency(getPeriodAmount(periodKey)));
+        renderSelectedPeriodComparison(periodKey);
         renderTopSites(periodKey);
+    }
+
+    private void renderSelectedPeriodComparison(String periodKey) {
+        if (selectedPeriodComparison == null) {
+            return;
+        }
+
+        if ("today".equals(periodKey)) {
+            setProgressText(selectedPeriodComparison, getPeriodAmount("today"), getPeriodAmount("yesterday"), "yesterday");
+            return;
+        }
+
+        if (("week".equals(periodKey)
+            || "month".equals(periodKey)
+            || "year".equals(periodKey)
+            || "days30".equals(periodKey))
+            && lastData != null
+            && !lastData.dailyEarnings.isEmpty()) {
+            try {
+                DayOfWeek weekStart = "sunday".equals(lastData.weekStartSetting)
+                    ? DayOfWeek.SUNDAY
+                    : DayOfWeek.MONDAY;
+                TrendCalculator.Comparison comparison = TrendCalculator.compare(
+                    lastData.dailyEarnings,
+                    periodKey,
+                    lastData.reportingDate == null ? LocalDate.now() : lastData.reportingDate,
+                    weekStart
+                );
+                if (amountsMatch(getPeriodAmount(periodKey), comparison.getCurrentTotal())) {
+                    setComparisonText(
+                        selectedPeriodComparison,
+                        comparison.getCurrentTotal(),
+                        comparison.getPreviousTotal(),
+                        comparison.getComparisonLabel() + " · today in progress"
+                    );
+                } else {
+                    selectedPeriodComparison.setText("Comparison pending a complete daily refresh");
+                    selectedPeriodComparison.setTextColor(TEXT_SECONDARY);
+                    selectedPeriodComparison.setVisibility(View.VISIBLE);
+                }
+                return;
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Could not render the selected-period comparison.", error);
+            }
+        }
+
+        selectedPeriodComparison.setText("");
+        selectedPeriodComparison.setVisibility(View.GONE);
+    }
+
+    private void setProgressText(TextView view, double current, double previous, String label) {
+        if (previous <= 0d) {
+            view.setText("No comparable earnings");
+        } else {
+            double progress = (current / previous) * 100d;
+            view.setText(
+                String.format(Locale.US, "%.0f%%", progress)
+                    + " of " + label + " · " + formatCurrency(previous)
+            );
+        }
+        view.setTextColor(TEXT_SECONDARY);
+        view.setVisibility(View.VISIBLE);
+    }
+
+    private void setComparisonText(TextView view, double current, double previous, String label) {
+        if (previous == 0) {
+            view.setText("No comparable earnings");
+            view.setTextColor(TEXT_SECONDARY);
+            view.setVisibility(View.VISIBLE);
+            return;
+        }
+        double percent = ((current - previous) / Math.abs(previous)) * 100;
+        String prefix = percent > 0 ? "+" : "";
+        view.setText(
+            prefix + String.format(Locale.US, "%.1f", percent) + "% " + label
+                + " · " + formatCurrency(previous)
+        );
+        view.setTextColor(percent > 0 ? SUCCESS : percent < 0 ? ERROR_TEXT : TEXT_SECONDARY);
+        view.setVisibility(View.VISIBLE);
+    }
+
+    private boolean amountsMatch(double first, double second) {
+        double tolerance = Math.max(0.01d, Math.max(Math.abs(first), Math.abs(second)) * 0.000001d);
+        return Math.abs(first - second) <= tolerance;
+    }
+
+    private void selectTrendPeriod(String periodKey) {
+        currentTrendPeriod = "days7".equals(periodKey) ? "days7" : "days30";
+        for (Map.Entry<String, TextView> entry : trendButtons.entrySet()) {
+            boolean active = entry.getKey().equals(currentTrendPeriod);
+            entry.getValue().setSelected(active);
+            entry.getValue().setContentDescription(entry.getValue().getText() + (active ? ", selected" : ""));
+            entry.getValue().setTextColor(active ? Color.WHITE : TEXT_PRIMARY);
+            entry.getValue().setBackground(buttonBackground(
+                active ? ACCENT_STRONG : BG_SECONDARY,
+                active ? ACCENT_STRONG : BORDER
+            ));
+        }
+        renderTrend();
+    }
+
+    private void renderTrend() {
+        if (trendView == null || trendTotal == null || trendComparison == null || trendMeta == null) {
+            return;
+        }
+        if (lastData == null || lastData.dailyEarnings.isEmpty()) {
+            trendView.setSeries(Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), currentCurrency);
+            trendTotal.setText("—");
+            trendComparison.setText("Daily trend will appear after refresh");
+            trendComparison.setTextColor(TEXT_SECONDARY);
+            trendMeta.setText("Completed days · tap the chart for details");
+            return;
+        }
+
+        try {
+            int windowDays = "days7".equals(currentTrendPeriod) ? 7 : 30;
+            List<TrendAnalytics.DailyPoint> points = new ArrayList<>();
+            for (Map.Entry<LocalDate, Double> entry : lastData.dailyEarnings.entrySet()) {
+                if (entry.getKey() != null && entry.getValue() != null && Double.isFinite(entry.getValue())) {
+                    points.add(new TrendAnalytics.DailyPoint(entry.getKey(), entry.getValue()));
+                }
+            }
+            LocalDate anchorDate = lastData.reportingDate == null ? LocalDate.now() : lastData.reportingDate;
+            TrendAnalytics.TrendSummary summary = TrendAnalytics.analyze(
+                points,
+                anchorDate,
+                windowDays,
+                true
+            );
+
+            List<Double> currentValues = new ArrayList<>();
+            List<Double> previousValues = new ArrayList<>();
+            List<String> labels = new ArrayList<>();
+            for (TrendAnalytics.DailyPoint point : summary.getCurrentSeries()) {
+                currentValues.add(point.getValue());
+                labels.add(point.getDate().format(TREND_LABEL_FORMAT));
+            }
+            for (TrendAnalytics.DailyPoint point : summary.getPreviousSeries()) {
+                previousValues.add(point.getValue());
+            }
+
+            trendView.setSeries(
+                currentValues,
+                previousValues,
+                labels,
+                currentCurrency
+            );
+            trendTotal.setText(formatCurrency(summary.getCurrentTotal()));
+            OptionalDouble percentage = summary.getPercentageDelta();
+            if (!percentage.isPresent()) {
+                trendComparison.setText("Previous " + windowDays + " days had no earnings");
+                trendComparison.setTextColor(TEXT_SECONDARY);
+            } else {
+                double percent = percentage.getAsDouble();
+                String prefix = percent > 0 ? "+" : "";
+                trendComparison.setText(
+                    prefix + String.format(Locale.US, "%.1f", percent) + "% vs previous "
+                        + windowDays + " complete days · " + formatCurrency(summary.getPreviousTotal())
+                );
+                trendComparison.setTextColor(percent > 0 ? SUCCESS : percent < 0 ? ERROR_TEXT : TEXT_SECONDARY);
+            }
+
+            TrendAnalytics.DailyPoint bestDay = summary.getBestDay();
+            LocalDate currentStart = summary.getCurrentSeries().get(0).getDate();
+            LocalDate currentEnd = summary.getCurrentSeries().get(summary.getCurrentSeries().size() - 1).getDate();
+            trendMeta.setText(
+                currentStart.format(TREND_LABEL_FORMAT) + " – " + currentEnd.format(TREND_LABEL_FORMAT)
+                    + " · Average " + formatCurrency(summary.getDailyAverage()) + "/day · Best "
+                    + bestDay.getDate().format(TREND_LABEL_FORMAT) + " " + formatCurrency(bestDay.getValue())
+            );
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Could not render the earnings trend.", error);
+            trendView.setSeries(Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), currentCurrency);
+            trendTotal.setText("—");
+            trendComparison.setText("Trend unavailable");
+            trendComparison.setTextColor(ERROR_TEXT);
+            trendMeta.setText("Refresh to try again");
+        }
     }
 
     private void renderDailyChange(double today, double yesterday) {
         if (yesterday == 0) {
-            todayChange.setText("No comparison yet");
+            todayChange.setText("Yesterday has no comparable earnings");
             return;
         }
 
-        double change = today - yesterday;
-        double percent = Math.abs((change / yesterday) * 100);
-        String prefix = change > 0 ? "+" : change < 0 ? "-" : "";
-        if (change == 0) {
-            todayChange.setText("No change vs yesterday");
-        } else {
-            todayChange.setText(prefix + formatCurrency(Math.abs(change)) + " (" + prefix + String.format(Locale.US, "%.1f", percent) + "%) vs yesterday");
-        }
+        double progress = (today / yesterday) * 100d;
+        todayChange.setText(
+            String.format(Locale.US, "%.0f%%", progress)
+                + " of yesterday · Yesterday " + formatCurrency(yesterday)
+        );
     }
 
-    private void renderProjection(double monthAmount) {
-        LocalDate today = LocalDate.now();
+    private void renderProjection(double monthAmount, double todayAmount, LocalDate reportingDate) {
+        LocalDate today = reportingDate == null ? LocalDate.now() : reportingDate;
         int elapsedDays = Math.max(1, today.getDayOfMonth());
         int daysInMonth = YearMonth.from(today).lengthOfMonth();
-        double dailyAverage = monthAmount / elapsedDays;
-        double projected = dailyAverage * daysInMonth;
+        int completedDays = Math.max(0, elapsedDays - 1);
+        double completedEarnings = Math.max(0d, monthAmount - Math.max(0d, todayAmount));
+        double dailyAverage = completedDays > 0 ? completedEarnings / completedDays : Math.max(0d, todayAmount);
+        double projected = monthAmount + dailyAverage * Math.max(0, daysInMonth - elapsedDays);
         projectionAmount.setText(formatCurrency(projected));
-        projectionMeta.setText("Based on " + elapsedDays + "/" + daysInMonth + " days, " + formatCurrency(dailyAverage) + "/day");
+        projectionMeta.setText(
+            completedDays > 0
+                ? "Based on " + completedDays + " complete days · " + formatCurrency(dailyAverage) + "/day"
+                : "Early estimate · " + formatCurrency(dailyAverage) + "/day"
+        );
     }
 
     private void renderTopSites(String periodKey) {
         sitesList.removeAllViews();
+        if (lastData == null) {
+            sitesTotal.setText("No data");
+            TextView empty = text("Site data will appear after refresh.", 13, TEXT_SECONDARY, Typeface.NORMAL);
+            empty.setPadding(dp(2), dp(12), dp(2), dp(4));
+            sitesList.addView(empty);
+            return;
+        }
         List<SiteEarnings> sites = lastData == null ? null : lastData.topSitesByPeriod.get(periodKey);
         if (sites == null) {
             sites = new ArrayList<>();
         }
 
-        double total = 0;
+        double topSitesTotal = 0;
         int count = Math.min(7, sites.size());
         for (int i = 0; i < count; i++) {
-            total += sites.get(i).earnings;
+            topSitesTotal += sites.get(i).earnings;
         }
-        sitesTotal.setText(formatCurrency(total) + " total");
+        double periodTotal = getPeriodAmount(periodKey);
+        double shareBase = periodTotal > 0 ? periodTotal : topSitesTotal;
+        double coverage = periodTotal > 0 ? Math.max(0d, Math.min(1d, topSitesTotal / periodTotal)) : 0d;
+        sitesTotal.setText(
+            "Top 7 " + formatCurrency(topSitesTotal)
+                + (periodTotal > 0 ? " · " + String.format(Locale.US, "%.0f%%", coverage * 100d) : "")
+        );
 
         if (count == 0) {
             TextView empty = text("No site data for this period.", 13, Color.rgb(71, 85, 105), Typeface.NORMAL);
+            empty.setPadding(dp(2), dp(12), dp(2), dp(4));
             sitesList.addView(empty);
             return;
         }
 
         for (int i = 0; i < count; i++) {
             SiteEarnings site = sites.get(i);
-            LinearLayout row = card(Color.WHITE, Color.rgb(226, 232, 240));
-            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            LinearLayout row = vertical();
+            row.setPadding(dp(2), dp(12), dp(2), dp(12));
             LinearLayout content = horizontal();
             content.setGravity(Gravity.CENTER_VERTICAL);
             row.addView(content);
 
-            TextView name = text(site.name, 14, Color.rgb(15, 23, 42), Typeface.BOLD);
+            TextView rank = text(String.valueOf(i + 1), 12, TEXT_SECONDARY, Typeface.BOLD);
+            rank.setGravity(Gravity.CENTER_VERTICAL);
+            content.addView(rank, new LinearLayout.LayoutParams(dp(24), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            TextView name = text(site.name, 14, TEXT_PRIMARY, Typeface.NORMAL);
+            name.setSingleLine(true);
+            name.setEllipsize(TextUtils.TruncateAt.END);
             content.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-            TextView value = text(formatCurrency(site.earnings), 14, Color.rgb(15, 23, 42), Typeface.BOLD);
-            value.setGravity(Gravity.RIGHT);
+            double share = shareBase <= 0 ? 0 : Math.max(0, Math.min(1, site.earnings / shareBase));
+            TextView value = text(
+                formatCurrency(site.earnings) + " · " + String.format(Locale.US, "%.0f", share * 100) + "%",
+                13,
+                TEXT_PRIMARY,
+                Typeface.BOLD
+            );
+            value.setGravity(Gravity.END);
             content.addView(value);
-            sitesList.addView(row, matchWrapWithTop(8));
+            row.setContentDescription(
+                "Rank " + (i + 1) + ", " + site.name + ", " + formatCurrency(site.earnings)
+                    + ", " + String.format(Locale.US, "%.0f percent of period", share * 100d)
+            );
+
+            LinearLayout shareBar = horizontal();
+            shareBar.setBackground(buttonBackground(BG_TERTIARY, 0, dp(999)));
+            LinearLayout.LayoutParams shareBarParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5));
+            shareBarParams.setMargins(dp(24), dp(8), 0, 0);
+            row.addView(shareBar, shareBarParams);
+
+            View fill = new View(this);
+            fill.setBackground(buttonBackground(ACCENT_STRONG, 0, dp(999)));
+            shareBar.addView(fill, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, (float) share));
+            View remainder = new View(this);
+            shareBar.addView(remainder, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, (float) (1 - share)));
+
+            sitesList.addView(row, matchWrap());
+            if (i < count - 1) {
+                View divider = new View(this);
+                divider.setBackgroundColor(BORDER);
+                sitesList.addView(divider, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            }
+        }
+
+        double otherEarnings = Math.max(0d, periodTotal - topSitesTotal);
+        if (otherEarnings > 0.005d) {
+            View divider = new View(this);
+            divider.setBackgroundColor(BORDER);
+            sitesList.addView(divider, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            LinearLayout otherRow = horizontal();
+            otherRow.setGravity(Gravity.CENTER_VERTICAL);
+            otherRow.setPadding(dp(26), dp(12), dp(2), dp(4));
+            otherRow.addView(
+                text("Other sites", 13, TEXT_SECONDARY, Typeface.NORMAL),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1)
+            );
+            double otherShare = periodTotal > 0 ? otherEarnings / periodTotal : 0d;
+            TextView otherValue = text(
+                formatCurrency(otherEarnings) + " · " + String.format(Locale.US, "%.0f%%", otherShare * 100d),
+                12,
+                TEXT_SECONDARY,
+                Typeface.BOLD
+            );
+            otherValue.setGravity(Gravity.END);
+            otherRow.addView(otherValue);
+            sitesList.addView(otherRow, matchWrap());
         }
     }
 
@@ -1278,11 +1840,28 @@ public class MainActivity extends Activity {
             : fallbackData.periods.get(periodKey);
     }
 
+    private boolean isFallbackCompatible(ReportData fallbackData, ReportData targetData, String requestedCurrency) {
+        if (fallbackData == null || targetData == null || targetData.reportingDate == null) {
+            return false;
+        }
+        return targetData.accountName.equals(fallbackData.accountName)
+            && normalizeCurrencyCode(requestedCurrency).equals(normalizeCurrencyCode(fallbackData.currency))
+            && targetData.reportingZoneId.equals(fallbackData.reportingZoneId)
+            && targetData.reportingDate.equals(fallbackData.reportingDate)
+            && targetData.weekStartSetting.equals(fallbackData.weekStartSetting);
+    }
+
     private List<SiteEarnings> fallbackTopSites(ReportData fallbackData, String periodKey) {
         if (fallbackData == null || fallbackData.topSitesByPeriod.get(periodKey) == null) {
             return new ArrayList<>();
         }
-        return new ArrayList<>(fallbackData.topSitesByPeriod.get(periodKey));
+        List<SiteEarnings> copy = new ArrayList<>();
+        for (SiteEarnings site : fallbackData.topSitesByPeriod.get(periodKey)) {
+            if (site != null) {
+                copy.add(new SiteEarnings(site.name, site.earnings));
+            }
+        }
+        return copy;
     }
 
     private String formatPartialRefreshWarning(List<String> items) {
@@ -1385,7 +1964,7 @@ public class MainActivity extends Activity {
             if (existing == null) {
                 merged.put(key, new SiteEarnings(canonicalName.length() > 0 ? canonicalName : site.name, site.earnings));
             } else {
-                existing.earnings = Math.max(existing.earnings, site.earnings);
+                existing.earnings += site.earnings;
             }
         }
 
@@ -1403,21 +1982,7 @@ public class MainActivity extends Activity {
             .replaceFirst("\\.$", "")
             .toLowerCase(Locale.US);
 
-        if (host.matches("^\\d{1,3}(\\.\\d{1,3}){3}$")) {
-            return host;
-        }
-
-        String[] labels = host.split("\\.");
-        List<String> parts = new ArrayList<>();
-        for (String label : labels) {
-            if (label.length() > 0) {
-                parts.add(label);
-            }
-        }
-        if (parts.size() <= 2) {
-            return host;
-        }
-        return parts.get(parts.size() - 2) + "." + parts.get(parts.size() - 1);
+        return host;
     }
 
     private String formatCurrency(double amount) {
@@ -1474,10 +2039,40 @@ public class MainActivity extends Activity {
     }
 
     private void setStatus(String text) {
+        setStatus(text, false);
+    }
+
+    private void setStatus(String text, boolean error) {
         if (statusBox != null) {
             statusBox.setVisibility(text == null || text.length() == 0 ? View.GONE : View.VISIBLE);
+            statusBox.setBackground(buttonBackground(
+                error ? ERROR_SOFT : WARNING_SOFT,
+                error ? ERROR_BORDER : 0xFFFDBA74
+            ));
         }
-        statusText.setText(text);
+        if (statusText != null) {
+            statusText.setTextColor(error ? ERROR_TEXT : WARNING_TEXT);
+            statusText.setText(text == null ? "" : text);
+        }
+    }
+
+    private void setSyncStatus(String text) {
+        if (syncStatusText != null) {
+            syncStatusText.setText(text == null ? "" : text);
+        }
+    }
+
+    private String formatUpdatedStatus(ReportData data) {
+        long timestamp = data.updatedAtEpochMs > 0 ? data.updatedAtEpochMs : System.currentTimeMillis();
+        ZoneId reportingZone = parseZoneId(data.reportingZoneId);
+        String time = Instant.ofEpochMilli(timestamp)
+            .atZone(reportingZone)
+            .format(UPDATED_TIME_FORMAT);
+        String accountName = data.accountDisplayName == null ? "" : data.accountDisplayName.trim();
+        String state = data.warning == null || data.warning.length() == 0 ? "All data ready" : "Some cached data";
+        return accountName.length() == 0
+            ? "Updated " + time + " · " + state
+            : "Updated " + time + " · " + state + " · " + accountName;
     }
 
     private void updateModeBadge(String text) {
@@ -1490,6 +2085,9 @@ public class MainActivity extends Activity {
 
     private void setLoading(boolean loading) {
         isLoading = loading;
+        if (trendView != null) {
+            trendView.setLoading(loading && (lastData == null || lastData.dailyEarnings.isEmpty()));
+        }
         if (!loading && pullRefreshActive) {
             resetPullRefreshIndicator();
         }
@@ -1582,7 +2180,10 @@ public class MainActivity extends Activity {
     private FrameLayout headerIconButton(int drawableRes, boolean isRefresh) {
         FrameLayout button = new FrameLayout(this);
         button.setBackground(buttonBackground(BG_SECONDARY, BORDER));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(38), dp(38));
+        button.setContentDescription(isRefresh ? "Refresh earnings" : "Open settings");
+        button.setFocusable(true);
+        button.setClickable(true);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(48));
         params.setMargins(dp(7), 0, 0, 0);
         button.setLayoutParams(params);
 
@@ -1605,7 +2206,7 @@ public class MainActivity extends Activity {
         button.setGravity(Gravity.CENTER);
         button.setPadding(dp(12), 0, dp(12), 0);
         button.setBackground(buttonBackground(primary ? ACCENT_STRONG : BG_SECONDARY, primary ? ACCENT_STRONG : BORDER));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
         params.setMargins(0, 0, dp(8), 0);
         button.setLayoutParams(params);
         return button;
@@ -1613,10 +2214,11 @@ public class MainActivity extends Activity {
 
     private TextView periodButton(String value) {
         TextView button = text(value, 12, TEXT_PRIMARY, Typeface.BOLD);
+        button.setFocusable(true);
         button.setGravity(Gravity.CENTER);
         button.setPadding(dp(12), 0, dp(12), 0);
         button.setBackground(buttonBackground(BG_SECONDARY, BORDER));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
         params.setMargins(0, 0, dp(8), 0);
         button.setLayoutParams(params);
         return button;
@@ -1630,7 +2232,7 @@ public class MainActivity extends Activity {
     }
 
     private GradientDrawable buttonBackground(int background, int stroke) {
-        return buttonBackground(background, stroke, dp(8));
+        return buttonBackground(background, stroke, dp(14));
     }
 
     private GradientDrawable buttonBackground(int background, int stroke, float radius) {
@@ -1676,7 +2278,14 @@ public class MainActivity extends Activity {
 
         @Override
         public boolean dispatchTouchEvent(MotionEvent event) {
+            boolean wasPulling = isPullingToRefresh;
             boolean handled = handlePullToRefreshTouch(this, event);
+            if (handled && !wasPulling && event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                MotionEvent cancel = MotionEvent.obtain(event);
+                cancel.setAction(MotionEvent.ACTION_CANCEL);
+                super.dispatchTouchEvent(cancel);
+                cancel.recycle();
+            }
             if (handled && event.getActionMasked() == MotionEvent.ACTION_UP) {
                 performClick();
             }
@@ -1732,10 +2341,40 @@ public class MainActivity extends Activity {
     private static class ReportData {
         final Map<String, Double> periods = new HashMap<>();
         final Map<String, List<SiteEarnings>> topSitesByPeriod = new HashMap<>();
+        final Map<LocalDate, Double> dailyEarnings = new LinkedHashMap<>();
         String currency = "EUR";
         String source = "";
         String accountName = "";
         String accountDisplayName = "";
+        String reportingZoneId = "";
+        String weekStartSetting = "monday";
+        LocalDate reportingDate;
+        long updatedAtEpochMs;
         String warning = "";
+
+        ReportData copy() {
+            ReportData copy = new ReportData();
+            copy.periods.putAll(periods);
+            copy.dailyEarnings.putAll(dailyEarnings);
+            for (Map.Entry<String, List<SiteEarnings>> entry : topSitesByPeriod.entrySet()) {
+                List<SiteEarnings> sites = new ArrayList<>();
+                if (entry.getValue() != null) {
+                    for (SiteEarnings site : entry.getValue()) {
+                        sites.add(new SiteEarnings(site.name, site.earnings));
+                    }
+                }
+                copy.topSitesByPeriod.put(entry.getKey(), sites);
+            }
+            copy.currency = currency;
+            copy.source = source;
+            copy.accountName = accountName;
+            copy.accountDisplayName = accountDisplayName;
+            copy.reportingZoneId = reportingZoneId;
+            copy.weekStartSetting = weekStartSetting;
+            copy.reportingDate = reportingDate;
+            copy.updatedAtEpochMs = updatedAtEpochMs;
+            copy.warning = warning;
+            return copy;
+        }
     }
 }

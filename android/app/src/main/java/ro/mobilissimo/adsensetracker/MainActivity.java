@@ -1279,7 +1279,20 @@ public class MainActivity extends Activity {
             }
         }
 
-        return mergeTopSites(sites);
+        List<SiteEarnings> mergedSites = mergeTopSites(sites);
+        double topSevenTotal = 0d;
+        for (int i = 0; i < Math.min(7, mergedSites.size()); i++) {
+            topSevenTotal += mergedSites.get(i).earnings;
+        }
+        double reportTotal = extractReportTotal(report);
+        if (TopSitesMerger.isInconsistentWithReportTotal(topSevenTotal, reportTotal)) {
+            Log.w(
+                TAG,
+                "Top Sites total exceeds the matching report total after alias deduplication: "
+                    + topSevenTotal + " > " + reportTotal
+            );
+        }
+        return mergedSites;
     }
 
     private String extractCurrency(JSONObject report) {
@@ -1954,33 +1967,16 @@ public class MainActivity extends Activity {
     }
 
     private List<SiteEarnings> mergeTopSites(List<SiteEarnings> sites) {
-        Map<String, SiteEarnings> merged = new HashMap<>();
+        List<TopSitesMerger.Entry> rawEntries = new ArrayList<>();
         for (SiteEarnings site : sites) {
-            String canonicalName = canonicalizeSiteName(site.name);
-            String key = canonicalName.length() > 0 ? canonicalName : site.name.toLowerCase(Locale.US);
-            SiteEarnings existing = merged.get(key);
-            if (existing == null) {
-                merged.put(key, new SiteEarnings(canonicalName.length() > 0 ? canonicalName : site.name, site.earnings));
-            } else {
-                existing.earnings += site.earnings;
-            }
+            rawEntries.add(new TopSitesMerger.Entry(site.name, site.earnings));
         }
 
-        List<SiteEarnings> result = new ArrayList<>(merged.values());
-        Collections.sort(result, (a, b) -> Double.compare(b.earnings, a.earnings));
+        List<SiteEarnings> result = new ArrayList<>();
+        for (TopSitesMerger.Entry entry : TopSitesMerger.mergeAliases(rawEntries)) {
+            result.add(new SiteEarnings(entry.getName(), entry.getEarnings()));
+        }
         return result;
-    }
-
-    private String canonicalizeSiteName(String name) {
-        String host = name == null ? "" : name.trim()
-            .replaceFirst("(?i)^https?://", "")
-            .split("/")[0]
-            .split("\\?")[0]
-            .replaceFirst("(?i)^www\\.", "")
-            .replaceFirst("\\.$", "")
-            .toLowerCase(Locale.US);
-
-        return host;
     }
 
     private String formatCurrency(double amount) {
